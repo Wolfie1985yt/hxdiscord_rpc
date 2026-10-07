@@ -1,11 +1,13 @@
 #include "connection.hpp"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <string>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -32,6 +34,41 @@ static const char *GetTempPath()
 	temp = temp ? temp : getenv("TEMP");
 	temp = temp ? temp : "/tmp";
 	return temp;
+}
+
+static bool FindDiscordSocket(const char *directory, std::string &outPath, int maxDepth = 3, int currentDepth = 0)
+{
+	if (currentDepth >= maxDepth)
+		return false;
+
+	DIR *dir = opendir(directory);
+	if (!dir)
+		return false;
+
+	struct dirent *entry;
+	while ((entry = readdir(dir)) != NULL)
+	{
+		if (strncmp(entry->d_name, "discord-ipc-", 12) == 0)
+		{
+			std::string fullPath = std::string(directory) + "/" + entry->d_name;
+			outPath = fullPath;
+			closedir(dir);
+			return true;
+		}
+
+		if (entry->d_type == DT_DIR && entry->d_name[0] != '.')
+		{
+			std::string fullPath = std::string(directory) + "/" + entry->d_name;
+			if (FindDiscordSocket(fullPath.c_str(), outPath, maxDepth, currentDepth + 1))
+			{
+				closedir(dir);
+				return true;
+			}
+		}
+	}
+
+	closedir(dir);
+	return false;
 }
 
 BaseConnection *BaseConnection::Create()
@@ -77,21 +114,17 @@ bool BaseConnection::Open()
 	setsockopt(self->sock, SOL_SOCKET, SO_NOSIGPIPE, &optval, sizeof(optval));
 #endif
 
-	std::vector<std::string> basePaths = {std::string(tempPath) + "/snap.discord", tempPath};
-
-	for (const auto &basePath : basePaths)
+	std::string socketPath;
+	if (FindDiscordSocket(tempPath, socketPath))
 	{
-		for (int pipeNum = 0; pipeNum < 10; ++pipeNum)
+		snprintf(PipeAddr.sun_path, sizeof(PipeAddr.sun_path), "%s", socketPath.c_str());
+
+		int err = connect(self->sock, (const sockaddr *)&PipeAddr, sizeof(PipeAddr));
+
+		if (err == 0)
 		{
-			snprintf(PipeAddr.sun_path, sizeof(PipeAddr.sun_path), "%s/discord-ipc-%d", basePath.c_str(), pipeNum);
-
-			int err = connect(self->sock, (const sockaddr *)&PipeAddr, sizeof(PipeAddr));
-
-			if (err == 0)
-			{
-				self->isOpen = true;
-				return true;
-			}
+			self->isOpen = true;
+			return true;
 		}
 	}
 
