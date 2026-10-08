@@ -56,7 +56,7 @@ static bool FindDiscordSocket(const char *directory, std::string &outPath, int m
 			return true;
 		}
 
-		if (entry->d_type == DT_DIR && entry->d_name[0] != '.')
+		if (entry->d_type == DT_DIR)
 		{
 			std::string fullPath = std::string(directory) + "/" + entry->d_name;
 			if (FindDiscordSocket(fullPath.c_str(), outPath, maxDepth, currentDepth + 1))
